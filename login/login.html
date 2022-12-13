@@ -1,0 +1,49 @@
+<!doctype html>
+
+<html lang="en">
+<head>
+  <title>Code City Login</title>
+  <link href="<<<STATIC_URL>>>style/jfk.css" rel="stylesheet">
+  <style>
+    body {
+      text-align: center;
+    }
+    noscript {
+      font-size: small;
+      font-family: sans-serif;
+    }
+    #signin {
+      display: none;
+    }
+    .container {
+      display: table;
+      position: absolute;
+      top: 0;
+      left: 0;
+      height: 100%;
+      width: 100%;
+    }
+    .centered {
+      display: table-cell;
+      vertical-align: middle;
+    }
+  </style>
+</head>
+<body>
+  <noscript>JavaScript required</noscript>
+  <div class="container">
+    <div class="centered">
+      <div class="jfk-button jfk-button-submit" role="button" id="signin">
+        Sign in
+      </div>
+    </div>
+  </div>
+  <script>
+    var button =  document.getElementById('signin');
+    button.style.display = 'inline-block';
+    button.addEventListener('click', function() {
+      parent.location = "<<<OAUTH_URL>>>";
+    });
+  </script>
+</body>
+</html>

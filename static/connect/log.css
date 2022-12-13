@@ -1,0 +1,84 @@
+body {
+  font-family: 'Roboto Mono', monospace;
+}
+
+#scrollDiv {
+  padding-left: 15px;
+}
+
+#scrollDiv>div:first-child {
+  /* Add whitespace above the first line so that the client buttons don't
+  obscure any content. */
+  margin-top: 2em;
+}
+
+.zippySpan {
+  cursor: pointer;
+  margin-left: -15px;
+  position: absolute;
+}
+
+.zippySpan::before {
+  content: '▸ ';
+ }
+
+.zippySpan.open::before {
+  content: '▾ ';
+}
+
+.zippySpan:hover {
+  color: #d00;
+}
+
+pre {
+  font-family: 'Roboto Mono', monospace;
+  margin-bottom: 0;
+  margin-top: 0;
+}
+
+.commandDiv {
+  background: #ffc;
+}
+
+.sceneTitle {
+  font-weight: bold;
+}
+
+.openIcon {
+  fill: #444;
+  width: 1.5ex;
+}
+
+.openIcon:hover {
+  fill: #d00;
+}
+
+.connectDiv {
+  background-color: #0a0;
+}
+
+.disconnectDiv {
+  background-color: #d00;
+}
+
+.connectDiv, .disconnectDiv {
+  color: #fff;
+  padding: 0 15px;
+  margin-left: -15px;
+}
+
+.connectDiv>.date, .disconnectDiv>.date {
+  float: right;
+}
+
+a.reconnect {
+  color: #fff;
+  cursor: pointer;
+  margin-left: 1em;
+  text-decoration: underline dotted;
+  user-select: none;
+}
+
+a.reconnect:hover {
+  opacity: .9;
+}

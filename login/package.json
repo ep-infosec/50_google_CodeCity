@@ -1,0 +1,24 @@
+{
+  "name": "codecity-login",
+  "version": "0.0.0",
+  "description": "Login server for the Code City project",
+  "main": "loginServer.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/google/CodeCity.git"
+  },
+  "author": "Google",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/google/CodeCity/issues"
+  },
+  "homepage": "https://github.com/google/CodeCity#readme",
+  "dependencies": {
+    "forwarded-parse": "^2.1.1",
+    "googleapis": "^59.0.0"
+  },
+  "devDependencies": {}
+}

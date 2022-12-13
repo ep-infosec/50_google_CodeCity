@@ -1,0 +1,421 @@
+#!/usr/bin/env node
+/**
+ * @license
+ * Copyright 2017 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * @fileoverview Node.js server that provides connection services to Code City.
+ * @author fraser@google.com (Neil Fraser)
+ */
+
+'use strict';
+
+var crypto = require('crypto');
+var fs = require('fs');
+var http = require('http');
+var net = require('net');
+
+// Configuration constants.
+const configFileName = 'connectServer.cfg';
+
+// Global variables.
+var CFG = null;
+var queueList = Object.create(null);
+
+const DEFAULT_CFG = {
+  // Internal port for this HTTP server.  Nginx hides this from users.
+  httpPort: 7782,
+  // URL of login page (absolute or relative).
+  loginUrl: 'https://login.example.codecity.world/',
+  // URL of static folder (absolute or relative).
+  staticUrl: 'https://static.example.codecity.world/',
+  // Host of Code City.
+  remoteHost: 'localhost',
+  // Port of Code City.
+  remotePort: 7777,
+  // Age in seconds of abandoned queues to be closed.
+  connectionTimeout: 300
+};
+
+/**
+ * Class for one user's connection to Code City.
+ * Establishes a connection and buffers the text coming from Code City.
+ * @param {string} id ID of this queue.
+ * @constructor
+ */
+var Queue = function (id) {
+  // Save 'this' for closures below.
+  var thisQueue = this;
+  /**
+   * ID of this queue in queueList.
+   */
+  this.id = id;
+  /**
+   * Time that this queue was pinged by a user.  Abandoned queues are deleted.
+   */
+  this.lastPingTime = Date.now();
+  /**
+   * The index number of the most recent memo added to the memo buffer.
+   */
+  this.memoNum = 0;
+  /**
+   * Buffer of incomplete data from Code City.
+   * If undefined, drop all input until next linefeed.
+   */
+  this.lineBuffer = '';
+  /**
+   * Maximum allowed length (in bytes) of a single memo.
+   */
+  this.maxLineSize = 10 * 1024 * 1024;
+  /**
+   * Buffer of memos from Code City to the user.
+   */
+  this.memoBuffer = [];
+  /**
+   * The index number of the most recent command received from the user.
+   */
+  this.commandNum = 0;
+  /**
+   * Persistent TCP connection to Code City.
+   */
+  this.client = new net.Socket();
+
+  this.client.on('close', this.destroy.bind(this, 'Code City closed session'));
+
+  this.client.on('error', function(error) {
+    console.log('TCP error for session ' + id, error);
+  });
+
+  this.client.on('data', function(data) {
+    function drop(overflow) {
+      console.log('Session ' +  id + ' drops ' + overflow.length +
+          ' bytes of data.');
+      return '{"type":"narrate","text":"[OVERFLOW: ' + overflow.length +
+          ' bytes lost.]"}\n';
+    }
+
+    var text = data.toString();
+    if (!text) {
+      return;
+    }
+    if (thisQueue.lineBuffer) {
+      text = thisQueue.lineBuffer + text;
+    }
+    // Split into lines, while preserving the linebreaks.
+    var lines = text.split(/^/m);
+    if (thisQueue.lineBuffer === undefined) {
+      // Throw away continued oversized line.
+      var incompleteLine = lines.shift();
+      lines.unshift(drop(incompleteLine));
+      if (incompleteLine.endsWith('\n')) {
+        // Found the end of the oversized line.  Reset the buffer.
+        thisQueue.lineBuffer = '';
+      }
+    }
+
+    for (var i = 0; i < lines.length; i++) {
+      if (lines[i].endsWith('\n')) {
+        if (lines[i].length > thisQueue.maxLineSize) {
+          // Line is complete, but oversized.  Drop.
+          lines[i] = drop(lines[i]);
+        }
+        thisQueue.memoBuffer.push(lines[i]);
+        thisQueue.memoNum++;
+      } else {
+        // Incomplete line.
+        if (lines[i].length > thisQueue.maxLineSize) {
+          // Discard, and throw away everything till next linebreak.
+          thisQueue.memoBuffer.push(drop(lines[i]));
+          thisQueue.memoNum++;
+          thisQueue.lineBuffer = undefined;
+        } else {
+          // Save this line to the buffer so it may be completed next time.
+          thisQueue.lineBuffer = lines[i];
+        }
+      }
+    }
+  });
+
+  this.client.connect(CFG.remotePort, CFG.remoteHost);
+};
+
+/**
+ * Close this queue and deregister it.
+ * @param {string} msg Console message to print (with ID appended).
+ */
+Queue.prototype.destroy = function(msg) {
+  if (queueList[this.id]) {
+    delete queueList[this.id];
+  }
+  this.client.end();
+  console.log(msg + ' ' + this.id);
+};
+
+/**
+ * Load a file from disk, add substitutions, and serve to the web.
+ * @param {!Object} response HTTP server response object.
+ * @param {string} filename Name of template file on disk.
+ * @param {!Object} subs Hash of replacement strings.
+ */
+function serveFile(response, filename, subs) {
+  fs.readFile(filename, 'utf8', function(err, data) {
+    if (err) {
+      response.statusCode = 500;
+      console.log(err);
+      response.end('Unable to load file: ' + filename + '\n' + err);
+    }
+    // Inject substitutions.
+    for (var name in subs) {
+      data = data.replace(new RegExp(name, 'g'), subs[name]);
+    }
+    // Serve page to user.
+    response.statusCode = 200;
+    response.setHeader('Content-Type', 'text/html');
+    response.end(data);
+  });
+}
+
+/**
+ * Handles HTTP requests from web server.
+ * @param {!Object} request HTTP server request object
+ * @param {!Object} response HTTP server response object.
+ */
+function handleRequest(request, response) {
+  if (request.connection.remoteAddress !== '127.0.0.1') {
+    // This check is redundant, the server is only accessible to
+    // localhost connections.
+    console.log('Rejecting connection from ' + request.connection.remoteAddress);
+    response.end('Connection rejected.');
+    return;
+  }
+
+  var path = request.url.split('?')[0];  // Strip off any parameters.
+  if (request.method === 'GET' && path.endsWith('/log')) {
+    serveFile(response, 'log.html', {'<<<STATIC_URL>>>': CFG.staticUrl});
+    return;
+  }
+
+  if (request.method === 'GET' && path.endsWith('/world')) {
+    serveFile(response, 'world.html', {'<<<STATIC_URL>>>': CFG.staticUrl});
+    return;
+  }
+
+  if (request.method === 'GET' && path.endsWith('/')) {
+    var cookieList = {};
+    var rhc = request.headers.cookie;
+    rhc && rhc.split(';').forEach(function(cookie) {
+        var parts = cookie.split('=');
+        cookieList[parts.shift().trim()] = decodeURI(parts.join('='));
+    });
+    // Validate the ID to ensure there was no tampering.
+    var m = cookieList.ID && cookieList.ID.match(/^[0-9a-f]+$/);
+    if (!m) {
+      console.log('Missing login cookie.  Redirecting.');
+      response.writeHead(302, {  // Temporary redirect.
+         'Location': CFG.loginUrl
+       });
+      response.end('Login required.  Redirecting.');
+      return;
+    }
+    var seed = (Date.now() * Math.random()).toString() + cookieList.ID;
+    // This ID gets transmitted a *lot* so keep it short.
+    var sessionId = crypto.createHash('sha3-224').update(seed).digest('base64');
+    if (Object.keys(queueList).length > 1000) {
+      response.statusCode = 429;
+      response.end('Too many queues open at once.');
+      console.log('Too many queues open at once.');
+      return;
+    }
+    var queue = new Queue(sessionId);
+    queueList[sessionId] = queue;
+
+    // Start a connection.
+    queue.client.write('identify as ' + cookieList.ID + '\n');
+
+    var subs = {
+      '<<<SESSION_ID>>>': sessionId,
+      '<<<STATIC_URL>>>': CFG.staticUrl
+    };
+    serveFile(response, 'connect.html', subs);
+    console.log('Hello xxxx' + cookieList.ID.substring(cookieList.ID.length - 4) +
+                ', starting session ' + sessionId);
+    return;
+  }
+
+  if (request.method === 'POST' && path.endsWith('/ping')) {
+    var requestBody = '';
+    request.on('data', function(data) {
+      requestBody += data;
+      if (requestBody.length > 1000000) {  // Megabyte of commands?
+        console.error('Oversized JSON: ' + requestBody.length / 1024 + 'kb');
+        response.statusCode = 413;
+        response.end('Request Entity Too Large');
+      }
+    });
+    request.on('end', function() {
+      // No ID cookie, the user has logged out.
+      if (!/(^|;)\s*ID=\w/.test(request.headers.cookie)) {
+        console.error('Not logged in');
+        response.statusCode = 410;
+        response.end('Not logged in');
+        return;
+      }
+      try {
+        var receivedJson = JSON.parse(requestBody);
+        if (!receivedJson['q']) {
+          throw Error('No queue');
+        }
+      } catch (e) {
+        console.error('Illegal JSON');
+        response.statusCode = 412;
+        response.end('Illegal JSON');
+        return;
+      }
+      ping(receivedJson, response);
+    });
+    return;
+  }
+
+  response.statusCode = 404;
+  response.end('Unknown connectServer URL: ' + request.url);
+}
+
+function ping(receivedJson, response) {
+  var q = receivedJson['q'];
+  var ackMemoNum = receivedJson['ackMemoNum'];
+  var cmdNum = receivedJson['cmdNum'];
+  var cmds = receivedJson['cmds'];
+  var logout = receivedJson['logout'];
+
+  var queue = queueList[q];
+  if (!queue) {
+    console.log('Unknown session ' + q);
+    response.statusCode = 410;
+    response.end('Your session has timed out');
+    return;
+  }
+  queue.lastPingTime = Date.now();
+
+  if (typeof ackMemoNum === 'number') {
+    if (ackMemoNum > queue.memoNum) {
+      var msg = 'Client ' + q + ' ackMemoNum ' + ackMemoNum +
+                ', but queue.memoNum is only ' + queue.memoNum;
+      console.error(msg);
+      response.statusCode = 412;
+      response.end(msg);
+      return;
+    }
+    // Client acknowledges receipt of memos.
+    // Remove them from the output list.
+    queue.memoBuffer.splice(0,
+        queue.memoBuffer.length + ackMemoNum - queue.memoNum);
+  }
+
+  var delay = 0;
+  if (typeof cmdNum === 'number') {
+    // Client sent commands.  Increase server's index for acknowledgment.
+    var currentIndex = cmdNum - cmds.length + 1;
+    for (var i = 0; i < cmds.length; i++) {
+      if (currentIndex > queue.commandNum) {
+        queue.commandNum = currentIndex;
+        // Send commands to Code City.
+        queue.client.write(cmds[i]);
+        delay += 200;
+      }
+      currentIndex++;
+    }
+    var ackCmdNextPing = true;
+  } else {
+    var ackCmdNextPing = false;
+  }
+
+  if (logout) {
+    pong(queue, response, ackCmdNextPing);
+    queue.destroy('Client disconnected');
+  } else {
+    // Wait a fifth of a second for each command,
+    // but don't wait for more than a second.
+    var delay = Math.min(delay, 1000);
+    var replyFunc = pong.bind(null, queue, response, ackCmdNextPing);
+    setTimeout(replyFunc, delay);
+  }
+}
+
+function pong(queue, response, ackCmdNextPing) {
+  var sendingJson = {};
+  if (ackCmdNextPing) {
+    sendingJson['ackCmdNum'] = queue.commandNum;
+  }
+  if (queue.memoBuffer.length) {
+    sendingJson['memoNum'] = queue.memoNum;
+    sendingJson['memos'] = queue.memoBuffer;
+  }
+  response.statusCode = 200;
+  response.setHeader('Content-Type', 'application/json');
+  response.end(JSON.stringify(sendingJson));
+}
+
+/**
+ * Read the JSON configuration file and return it.  If none is
+ * present, write a stub and throw an error.
+ */
+function readConfigFile(filename) {
+  let data;
+  try {
+    data = fs.readFileSync(filename, 'utf8');
+  } catch (err) {
+    console.log(`Configuration file ${filename} not found.  ` +
+        'Creating new file.');
+    data = JSON.stringify(DEFAULT_CFG, null, 2) + '\n';
+    fs.writeFileSync(filename, data, 'utf8');
+  }
+  CFG = JSON.parse(data);
+  if (!CFG.loginUrl || CFG.loginUrl === DEFAULT_CFG.loginUrl) {
+    throw Error(
+        `Configuration file ${filename} not configured.  ` +
+        'Please edit this file.');
+  }
+  if (!CFG.loginUrl.endsWith('/')) CFG.loginUrl += '/';
+  if (!CFG.staticUrl.endsWith('/')) CFG.staticUrl += '/';
+}
+
+/**
+ * Close and destroy any abandoned queues.  Called every minute.
+ */
+function cleanup() {
+  var bestBefore = Date.now() - CFG.connectionTimeout * 1000;
+  for (var id in queueList) {
+    var queue = queueList[id];
+    if (queue.lastPingTime < bestBefore) {
+      queue.destroy('Timeout of session');
+    }
+  }
+}
+
+/**
+ * Start up the HTTP server.
+ */
+function startup() {
+  readConfigFile(configFileName);
+
+  var server = http.createServer(handleRequest);
+  server.listen(CFG.httpPort, 'localhost', function(){
+    console.log('Connection server listening on port ' + CFG.httpPort);
+  });
+  setInterval(cleanup, 60 * 1000);
+}
+
+startup();

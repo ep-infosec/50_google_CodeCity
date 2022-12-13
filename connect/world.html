@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Code City: World frame</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Patrick+Hand">
+    <link rel="stylesheet" href="<<<STATIC_URL>>>style/jfk.css">
+    <link rel="stylesheet" href="<<<STATIC_URL>>>style/svg.css">
+    <link rel="stylesheet" href="<<<STATIC_URL>>>connect/common.css">
+    <link rel="stylesheet" href="<<<STATIC_URL>>>connect/world.css">
+    <script>  // Data injected by connect server.
+      var STATIC_URL = '<<<STATIC_URL>>>';
+     </script>
+    <script src="<<<STATIC_URL>>>connect/common.js"></script>
+    <script src="<<<STATIC_URL>>>connect/world.js"></script>
+  </head>
+
+  <body>
+    <div style="display: none">
+      <!-- Extracted client templates -->
+      <span id="connectedTemplate">Connected.</span>
+      <span id="disconnectedTemplate">Disconnected.</span>
+      <span id="reconnectTemplate">Reconnect?</span>
+      <span id="closeIframeTemplate">Close iframe</span>
+      <span id="relaunchIframeTemplate">↻ Relaunch iframe</span>
+    </div>
+    <div id="scrollDiv">
+      <div id="panoramaDiv"></div>
+      <div id="iframeStorage"></div>
+    </div>
+  </body>
+</html>

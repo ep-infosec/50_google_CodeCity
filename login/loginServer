@@ -1,0 +1,332 @@
+#!/usr/bin/env node
+/**
+ * @license
+ * Copyright 2017 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * @fileoverview Node.js server that provides Google auth services to Code City.
+ * @author fraser@google.com (Neil Fraser)
+ */
+
+'use strict';
+
+const crypto = require('crypto');
+const forwardedParse = require('forwarded-parse');
+const fs = require('fs').promises;
+const {google} = require('googleapis');
+const http = require('http');
+const net = require('net');
+const {URL, format: urlFormat} = require('url');
+
+const oauth2Api = google.oauth2('v2');
+
+// Configuration constants.
+const configFileName = 'loginServer.cfg';
+
+// Global variables
+let CFG = null;
+const /** !Object<string, !google.auth.OAuth2> */ clients = {};
+
+const DEFAULT_CFG = {
+  // Internal port for this HTTP server.  Nginx hides this from users.
+  httpPort: 7781,
+  // URL of connect page (absolute or relative).
+  connectUrl: 'https://connect.example.codecity.world/',
+  // URL of static folder (absolute or relative).
+  staticUrl: 'https://static.example.codecity.world/',
+  // Google's API client ID.
+  clientId: '00000000000-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' +
+      '.apps.googleusercontent.com',
+  // Google's API client secret.
+  clientSecret: 'yyyyyyyyyyyyyyyyyyyyyyyy',
+  // Root domain.
+  cookieDomain: 'example.codecity.world',
+  // Regexp on email addresses that must pass to allow access.
+  emailRegexp: '.*',
+  // Port number for the login service backend.
+  backendPort: 7776,
+  /* List of fields, from data object returned by
+   * oauth2Api.userinfo.v2.me.get, to pass along in the request the
+   * login service backend.
+   *
+   * Available fieldnames, and the types and meanings of their values:
+   * - id: string - the user's OAuth (GAIA) ID as a numeric string.
+   *   If salt is set (below), the .id will be salted and hashed with
+   *   sha512 before being sent to the login backend service.
+   * - email: string - the user's email address.
+   * - verified_email: boolean - has the user's email address been verified?
+   * - name: string - the user's full name.
+   * - given_name: string - the user's given name.
+   * - family_name: string - the user's family name.
+   * - picture: string - URL pointing to the user's profile picture.
+   * - hd: string - the hosted domain, for GSuite accounts.
+   */
+  backendFields: ['id'],
+  /* Random salt for OAuth IDs.  If set to '' the .id field received
+   * from the Oauth server will be hashed but not salted. If set to 
+   * undefined (or not set) the .id wil be sent plaintext.
+   */
+  salt: 'zzzzzzzzzzzzzzzz'
+};
+
+/**
+ * Serve an error to the given ServerResult.  Also log information
+ * about the failed IncomingMessage to the console.
+ * @param {!http.IncomingMessage} request The request which triggered the error.
+ * @param {!http.ServerResponse} response The ServerResult to send error to.
+ * @param {number} statusCode the HTTP response code to be served.
+ * @param {string} message An additional message to include in the result.
+ * @return {void}
+ */
+function sendError(request, response, statusCode, message) {
+  console.log('%s %s (Host: %s): %d %s', request.method,
+              request.url.replace(/=[^&]*(?=&|$)/g, '=…'),
+              request.headers.host, statusCode, message);
+  response.writeHead(statusCode).end(message);
+}
+
+/**
+ * Load a file from disk, add substitutions, and serve to the web.
+ * @param {!IncomingMessage} request The request being answered.
+ * @param {!http.ServerResponse} response The ServerResult to send the file to.
+ * @param {string} filename Name of template file on disk.
+ * @param {!Object} subs Object-map of replacement strings.
+ */
+async function serveFile(request, response, filename, subs) {
+  let /** string */ data;
+  try {
+    data = String(await fs.readFile(filename, 'utf8'));
+  } catch (err) {
+    sendError(request, response,
+              500, `Unable to load file ${filename}: ${err}`);
+    return;
+  }
+  // Inject substitutions.
+  for (const name in subs) {
+    data = data.replace(new RegExp(name, 'g'), subs[name]);
+  }
+  // Serve page to user.
+  response.statusCode = 200;
+  response.setHeader('Content-Type', 'text/html');
+  response.end(data);
+}
+
+/**
+ * Send a string to the login service backend and return any data
+ * received in response.
+ * @param {string} query Data string to send to backend.
+ * @return {!Promise<string>} a promise yeilding the data received.
+ */
+async function pingBackend(query) {
+  let result = '';
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({port: CFG.backendPort});
+    socket.on('connect', () => {
+      socket.end(query);
+    });
+    socket.on('error', (error) => {
+      socket.destroy();
+      reject(error);
+    });
+    socket.on('data', (data) => {
+      result += String(data);
+    });
+    socket.on('end', () => {
+      resolve(result);
+    });
+  });
+}
+
+/**
+ * Handles HTTP requests from web server.
+ * @param {!Object} request HTTP server request object
+ * @param {!Object} response HTTP server response object.
+ */
+async function handleRequest(request, response) {
+  if (request.connection.remoteAddress !== '127.0.0.1') {
+    sendError(request, response, 403,
+              `Connection from ${request.connection.remoteAddress} denied.`);
+    return;
+  }
+
+  // Determine what URL the client contacted us on.
+  let proto = 'http';  // What proto we are actually listening to.
+  let host = request.headers.host;  // Host header we actually received.
+  // See if the first reverse proxy knows better.
+  const forwarded = request.headers.forwarded;
+  if (forwarded) {
+    try {
+      const forwards = forwardedParse(forwarded);
+      if (forwards[0]) {
+        if (forwards[0].proto) proto = forwards[0].proto;
+        if (forwards[0].host) host = forwards[0].host;
+      }
+    } catch (e) {
+      sendError(request, response, 400,
+                `Forwarded header: ${e.name}: ${e.message} of "${forwarded}"`);
+      return;
+    }
+  }
+  const url = new URL(request.url, `${proto}://${host}`);
+  const loginUrl = urlFormat(url, {fragment: false, search: false});
+
+  // Get an authentication client for our interactions with Google.
+  if (!clients[loginUrl]) {
+    // Create client for login URL not seen before.
+    clients[loginUrl] = new google.auth.OAuth2(
+        CFG.clientId, CFG.clientSecret, loginUrl);
+  }
+  const oauth2Client = clients[loginUrl];
+
+  // No auth code?  Serve login.html.
+  const code = url.searchParams.get('code');
+  if (!code) {
+    // Compute Google's login URL, including deciding where to
+    // redirect to afterwards.
+    const options = {scope: 'email'};
+    if (url.searchParams.has('after')) {
+      options.state = url.searchParams.get('after');
+    } else if (url.searchParams.has('loginThenClose')) {
+      options.state = CFG.staticUrl + 'login-close.html';
+    } else {
+      options.state = CFG.connectUrl;
+    }
+    const subs = {
+      '<<<OAUTH_URL>>>': oauth2Client.generateAuthUrl(options),
+      '<<<STATIC_URL>>>': CFG.staticUrl
+    };
+    serveFile(request, response, 'login.html', subs);
+    return;
+  }
+
+  // Handle the result of an OAuth login.
+  let tokens;
+  try {
+    ({tokens} = await oauth2Client.getToken(code));
+  } catch (err) {
+    sendError(request, response, 500, `Google OAuth2 fail: ${err}`);
+    return;
+  }
+  // Now tokens contains an access_token and an optional
+  // refresh_token. Save them.
+  oauth2Client.setCredentials(tokens);
+  let data;
+  try {
+    ({data} = await oauth2Api.userinfo.v2.me.get({auth: oauth2Client}));
+  } catch (err) {
+    sendError(request, response, 500, `Google Userinfo fail: ${err}`);
+    return;
+  }
+
+  // Check email address is allowed.
+  const emailRegexp = new RegExp(CFG.emailRegexp || '.*');
+  if (!emailRegexp.test(data.email)) {
+    sendError(request, response, 403, `Login denied for ${data.email}`);
+    return;
+  }
+  // FYI: If present, data.hd contains the GSfE domai,
+  // e.g. 'students.gissv.org', or 'sjsu.edu'.  We aren't using it
+  // now, but this might be used to filter users.
+
+  // Convert the OAuth (GAIA) ID into one unique for Code City.  Use
+  // CFG.salt to salt the sha512hash.  If .salt === '', then .id will
+  // still be hashed but not salted.
+  // TODO(cpcallen): it would be more secure to append salt to id.
+  if (('id' in data) && CFG.salt !== undefined) {
+    data.id = crypto.createHash('sha512')
+        .update(CFG.salt + data.id).digest('hex');
+  }
+
+  // Contact login service backend if configured.
+  let cookie;
+  if (CFG.backendPort) {
+    // Construct object to be passed to login service backend.
+    const loginData = {};
+    for (const name of CFG.backendFields || ['id']) {
+      if (name in data) loginData[name] = data[name];
+    }
+
+    // Ping the login service backend.
+    try {
+      cookie = await pingBackend(JSON.stringify(loginData) + '\n');
+    } catch (err) {
+      sendError(request, response, 500, `Login service backend fail: ${err}`);
+      return;
+    }
+  } else {
+    // Just use the (probably salted and hashed) id value like we used to.
+    cookie = data.id;
+  }
+  if (!cookie) {
+    sendError('Login service backend did not return a valid cookie');
+    return;
+  }
+
+  // Login successful.  Issue ID cookie.
+  if (!url.searchParams.has('state')) {
+    sendError(request, response, 500,
+              'Login successful but loginServer forgot where to redirect to.');
+    return;
+  }
+  const domain = CFG.cookieDomain ? `Domain=${CFG.cookieDomain}; ` : '';
+  const redirectUrl = url.searchParams.get('state');
+
+  response.writeHead(302, {  // Temporary redirect.
+    'Set-Cookie': `ID=${cookie}; HttpOnly; ${domain}Path=/`,
+    'Location': redirectUrl,
+  });
+  response.end('Login OK.  Redirecting.');
+  console.log('Accepted xxxx' + cookie.substring(cookie.length - 4));
+}
+
+/**
+ * Read the JSON configuration file and return it.  If none is
+ * present, write a stub and throw an error.
+ */
+async function readConfigFile(filename) {
+  let data;
+  try {
+    data = await fs.readFile(filename, 'utf8');
+  } catch (err) {
+    console.log(`Configuration file ${filename} not found.  ` +
+        'Creating new file.');
+    data = JSON.stringify(DEFAULT_CFG, null, 2) + '\n';
+    await fs.writeFile(filename, data, 'utf8');
+  }
+  CFG = JSON.parse(data);
+  if (CFG.salt === DEFAULT_CFG.salt) {
+    throw Error(
+        `Configuration file ${filename} not configured.  ` +
+        'Please edit this file.');
+  }
+  if (!CFG.connectUrl.endsWith('/')) CFG.connectUrl += '/';
+  if (!CFG.staticUrl.endsWith('/')) CFG.staticUrl += '/';
+}
+
+/**
+ * Read configuration and start up the HTTP server.
+ */
+async function startup() {
+  await readConfigFile(configFileName);
+
+  // Start an HTTP server.
+  const server = http.createServer(handleRequest);
+  server.listen(CFG.httpPort, 'localhost', () => {
+    console.log(`Login server listening on port ${CFG.httpPort}`);
+  });
+}
+
+startup();

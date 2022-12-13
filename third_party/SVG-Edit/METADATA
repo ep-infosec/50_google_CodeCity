@@ -1,0 +1,13 @@
+name: "SVG-Edit"
+description:
+    "SVG-Edit is an SVG editor embeddable in a webpage."
+
+third_party {
+  url {
+    type: GIT
+    value: "https://github.com/SVG-Edit/svgedit"
+  }
+  version: "a2df54881f6b3a4aabb646e60838ea6a7725c913"
+  last_upgrade_date { year: 2018 month: 6 day: 11 }
+  license_type: NOTICE
+}

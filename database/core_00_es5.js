@@ -1,0 +1,1 @@
+../core/core_00_es5.js

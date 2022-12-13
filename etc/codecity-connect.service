@@ -1,0 +1,12 @@
+[Unit]
+Description=Code City Connect Server
+Documentation=https://github.com/google/CodeCity
+After=network.target
+
+[Service]
+SyslogIdentifier=cc-connect
+WorkingDirectory=/home/codecity/CodeCity/connect
+User=codecity
+Group=codecity
+ExecStart=@/home/codecity/CodeCity/connect/connectServer cc-connect
+Restart=on-failure

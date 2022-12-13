@@ -1,0 +1,93 @@
+html {
+  height: 100%;
+}
+
+body {
+  color: #444;
+  background-color: #fff;
+  border-left: 2px dashed #fff;
+  border-right: 2px dashed #fff;
+  font-family: 'Roboto Mono', monospace;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  padding: 0;
+  transition: border 0.5s;
+}
+
+body.paused {
+  border-left: 2px dashed #d00;
+  border-right: 2px dashed #d00;
+}
+
+#worldFrame, #logFrame {
+  position: absolute;
+  width: 100%;
+  z-index: -1;
+  border: none;
+}
+
+#mainTable {
+  height: 100%;
+  width: 100%;
+  background: #fff;
+}
+
+tfoot {
+  height: 1%;
+}
+
+#displayCell {
+  text-align: center;
+}
+
+#commandTextarea {
+  color: #000;
+  box-sizing: border-box;
+  background-color: #f8f8f8;
+  font-size: 12pt;
+  height: 42pt;
+  margin-top: 2px;
+  resize: none;
+  width: 100%;
+}
+
+#optionsDiv {
+  background: rgba(255,255,255, 0.8);
+  margin-right: 25px; /* Leave room for the scrollbar. */
+  position: fixed;
+  right: 0;
+  top: 0;
+  z-index: 9;  /* On top of the iframes. */
+  padding: 0 2px 2px 2px;
+}
+
+.icon {
+  height: 8px;
+  width: 8px;
+  fill: #444;
+}
+
+.jfk-button {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  border-top: none !important;
+}
+
+#playIcon {
+  fill: #fff;
+}
+
+#worldButton {
+  border-bottom-right-radius: 0;
+  margin-right: 0;
+}
+
+#logButton {
+  border-bottom-left-radius: 0;
+  margin-left: -1px;
+}
+
+#clearButton {
+  margin-right: 0;  /* This is the right-most button. */
+}

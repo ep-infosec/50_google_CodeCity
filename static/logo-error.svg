@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="105px" height="100px">
+  <defs>
+    <filter id="warp">
+      <feTurbulence type="fractalNoise" baseFrequency="0.015" numOctaves="1" result="warp">
+        <animate attributeName="baseFrequency" attributeType="XML" dur="60s" values="0;0.003;0.012;0.027;0.048;0.073;0.103;0.136;0.173;0.211;0.250;0.289;0.327;0.363;0.397;0.427;0.452;0.473;0.488;0.497;0.5;0.497;0.488;0.473;0.453;0.427;0.397;0.364;0.328;0.290;0.251;0.212;0.173;0.137;0.104;0.074;0.048;0.028;0.012;0.003;0" repeatCount="indefinite" />
+      </feTurbulence>
+      <feDisplacementMap xChannelSelector="R" yChannelSelector="G" scale="30" in="SourceGraphic" in2="warp" />
+    </filter>
+  </defs>
+  <path filter="url(#warp)"
+     d="m 6,90 0,-25 10,0 0,-8 9,0 0,-5 8,0 0,5 2,0 0,33 3,0 0,-13 2,0 0,-7 2,0 0,-32 1,0 0,-7 1,0 0,-6 2,0 0,-1 1,0 0,-12 1,0 0,-12 0,12 1,0 0,12 1,0 0,1 2,0 0,6 1,0 0,7 1,0 0,32 2,0 0,7 2,0 0,13 4,0 0,-32 5,0 0,-5 6,0 0,5 3,0 0,32 5,0 0,-42 3,0 0,-9 7,0 0,-2 5,0 0,2 2,0 0,51"
+     style="fill: none; stroke: #000; stroke-width: 1.5;" />
+</svg>

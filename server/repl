@@ -1,0 +1,69 @@
+#!/usr/bin/env node
+/**
+ * @license
+ * Copyright 2018 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * @fileoverview Read Eval Print Loop (REPL) for JavaScript Interpreter.
+ * @author cpcallen@google.com (Christopher Allen)
+ */
+'use strict';
+
+const readline = require('readline');
+const Interpreter = require('./interpreter');
+const fs = require('fs');
+
+const intrp = new Interpreter;
+intrp.createThreadForSrc(fs.readFileSync('startup/es5.js', 'utf8'));
+intrp.run();
+intrp.createThreadForSrc(fs.readFileSync('startup/es6.js', 'utf8'));
+intrp.run();
+intrp.createThreadForSrc(fs.readFileSync('startup/es7.js', 'utf8'));
+intrp.run();
+intrp.createThreadForSrc(fs.readFileSync('startup/esx.js', 'utf8'));
+intrp.run();
+intrp.createThreadForSrc(fs.readFileSync('startup/cc.js', 'utf8'));
+intrp.run();
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  removeHistoryDuplicates: true,
+});
+
+rl.prompt();
+rl.on('line', function(line) {
+  try {
+    let thread;
+    try {
+      thread = intrp.createThreadForSrc(line).thread;
+    } catch (e) {
+      console.log('%s: %s', e.name, e.message);
+      return;
+    }
+    intrp.run();
+    const value = thread.value;
+    if (value instanceof intrp.Function) {
+      console.log(value.toString());
+    } else {
+      console.log('%o', intrp.pseudoToNative(thread.value));
+    }
+  } finally {
+    rl.prompt();
+  }
+}).on('close', function() {
+  process.exit(0);
+});

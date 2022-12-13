@@ -1,0 +1,12 @@
+[Unit]
+Description=Code City Login Server
+Documentation=https://github.com/google/CodeCity
+After=network.target
+
+[Service]
+SyslogIdentifier=cc-login
+WorkingDirectory=/home/codecity/CodeCity/login
+User=codecity
+Group=codecity
+ExecStart=@/home/codecity/CodeCity/login/loginServer cc-login 
+Restart=on-failure

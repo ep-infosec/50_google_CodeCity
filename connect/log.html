@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Code City: Log frame</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto+Mono">
+    <link rel="stylesheet" href="<<<STATIC_URL>>>style/jfk.css">
+    <link rel="stylesheet" href="<<<STATIC_URL>>>connect/common.css">
+    <link rel="stylesheet" href="<<<STATIC_URL>>>connect/log.css">
+    <script>  // Data injected by connect server.
+      var STATIC_URL = '<<<STATIC_URL>>>';
+     </script>
+    <script src="<<<STATIC_URL>>>connect/common.js"></script>
+    <script src="<<<STATIC_URL>>>connect/log.js"></script>
+  </head>
+
+  <body>
+    <div style="display: none">
+      <!-- Extracted client templates -->
+      <span id="connectedTemplate">Connected.</span>
+      <span id="disconnectedTemplate">Disconnected.</span>
+      <span id="reconnectTemplate">Reconnect?</span>
+      <span id="roomObjectTemplate">You see %1 here.</span>
+      <span id="roomObjectsTemplate">You see %1 here.</span>
+      <span id="roomUserTemplate">%1 is here.</span>
+      <span id="roomUsersTemplate">%1 are here.</span>
+      <span id="unknownTemplate">Someone</span>
+      <span id="sayTemplate">%1 says, "%2"</span>
+      <span id="saySelfTemplate">You say, "%1"</span>
+      <span id="askTemplate">%1 asks, "%2"</span>
+      <span id="askSelfTemplate">You ask, "%1"</span>
+      <span id="exclaimTemplate">%1 exclaims, "%2"</span>
+      <span id="exclaimSelfTemplate">You exclaim, "%1"</span>
+      <span id="thinkTemplate">%1 thinks, "%2"</span>
+      <span id="thinkSelfTemplate">You think, "%1"</span>
+      <span id="andTemplate">and</span>
+    </div>
+    <div id="scrollDiv"></div>
+  </body>
+</html>
